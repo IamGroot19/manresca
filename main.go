@@ -10,13 +10,18 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	
+	table "github.com/jedib0t/go-pretty/v6/table"
 )
 
+// This datastructure collects all the data
+//  related to a single input file passed to the tool
 type AllObjDetail struct {
 	Objects map[string][]ObjDetail
 }
 
+// This datastructure helps abstract
+// all the details related to a single manifest 
+// instead of passing multiple fields all the time
 type ObjDetail struct {
 	ObjKind string
 	ObjName string
@@ -39,7 +44,7 @@ func main() {
 	*/
 	yamlRawdata, err := os.ReadFile("./combined_dep-sts.yaml")
 	if err != nil {
-		fmt.Println("Error occurred while tryig to readfile")
+		fmt.Printf("Error reading YAML file: %v\n", err)
 	}
 	// fmt.Println("Printing raw data after reading the file: ", yamlRawdata)
 	manifests := splitYAML(string(yamlRawdata))
@@ -47,23 +52,30 @@ func main() {
 	var computedFileResult *AllObjDetail = &AllObjDetail{}
 	computedFileResult.Objects = make(map[string][]ObjDetail)
 	var computedObjResult *ObjDetail
-	var computedObjKind string
+	// var computedObjKind string
 
 	for _, manifest := range manifests {
-		computedObjKind, computedObjResult, err = computeEachObject([]byte(manifest))
+		_, computedObjResult, err = processEachObject([]byte(manifest))
 		if err != nil {
 			fmt.Println("Facing error whle parsing / computing: ", err)
 		} else if computedObjResult == nil {
-			fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
+			// fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
 		} else {
-			fmt.Println("obj kind: ", computedObjKind, ", cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
+			// fmt.Println("obj kind: ", computedObjKind, ", cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
 			(*computedFileResult).Objects[computedObjResult.ObjKind] = append((*computedFileResult).Objects[computedObjResult.ObjKind], *computedObjResult)
 		}
 	}
+		renderOutput(computedFileResult) // print tabular summary
+	
 
 }
 
-func computeEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
+// This method processes each k8s object and
+//  stores the resulting data in an object of
+// the `ObjDetail` type. 
+// It outsources actual resources extraction to a separate fcuntion
+// since podspec is common to both deployments and statefulsets 
+func processEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
 
 	type checkObjKind struct {
 		APIVersion string `yaml:"apiVersion"`
@@ -73,7 +85,6 @@ func computeEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
 	if err := yaml.Unmarshal(yamlRawdata, &tmpChkObjKind); err != nil {
 		fmt.Println("Error unmarshalling raw data to check object kind. Error: ", err)
 	}
-	// fmt.Println("object kind: ", tmpChkObjKind.Kind)
 
 	// TODO v2: The following section feels hacky especially when consideing that more items can popup in future. Go read about  interfaces well & other OSS code  and see if this can be improved.
 	switch tmpChkObjKind.Kind {
@@ -137,6 +148,29 @@ func processPodSpec(podTemplSpec v1.PodSpec, ObjectName string, ObjectKind strin
 
 	return currObjData, nil
 
+}
+
+func renderOutput(renderData *AllObjDetail) {
+
+	// w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+	// fmt.Fprintln(w, "Name\tKind\tCPU\tMem")
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	// t.SetStyle(table.StyleColoredBright)
+	t.SetStyle(table.StyleLight)
+	t.Style().Options.SeparateRows = true
+	rowConfigAutoMerge := table.RowConfig{AutoMerge: true}
+
+	t.AppendHeader(table.Row{"Kind", "Name", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
+	t.AppendHeader(table.Row{"", "", "Request", "Limit", "Request", "Limit"})
+	for objkind, objList := range renderData.Objects {
+
+		for _, obj := range objList {
+			t.AppendRow(table.Row{objkind, obj.ObjName, obj.CpuReq, obj.CpuLim, obj.MemReq, obj.MemLim})
+		}
+	}
+	t.Render()
 }
 
 // receives ineteger in byes and returns it as a human readable string

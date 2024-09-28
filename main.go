@@ -1,15 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strconv"
-
+	"strings"
+	yaml "sigs.k8s.io/yaml"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	yaml "sigs.k8s.io/yaml"
+	
 )
+
+type AllObjDetail struct {
+	Objects map[string][]ObjDetail
+}
 
 type ObjDetail struct {
 	ObjKind string
@@ -21,6 +27,7 @@ type ObjDetail struct {
 }
 
 func main() {
+
 	//////////////// Reading whole file in one go
 	/*
 		Reading the whole file in one go. Not optimal when the manifest is really big (like 10k-20k lines big)
@@ -30,23 +37,30 @@ func main() {
 		- https://stackoverflow.com/questions/1821811/how-to-read-write-from-to-a-file-using-go
 
 	*/
-	yamlRawdata, err := os.ReadFile("./sample-sts.yaml")
+	yamlRawdata, err := os.ReadFile("./combined_dep-sts.yaml")
 	if err != nil {
 		fmt.Println("Error occurred while tryig to readfile")
 	}
-	fmt.Println("Printing raw data after reading the file: ", yamlRawdata)
+	// fmt.Println("Printing raw data after reading the file: ", yamlRawdata)
+	manifests := splitYAML(string(yamlRawdata))
 
+	var computedFileResult *AllObjDetail = &AllObjDetail{}
+	computedFileResult.Objects = make(map[string][]ObjDetail)
 	var computedObjResult *ObjDetail
 	var computedObjKind string
 
-	computedObjKind, computedObjResult, err = computeEachObject(yamlRawdata)
-	if err != nil {
-		fmt.Println("Facing error whle parsing / computing: ", err)
-	} else if computedObjResult == nil {
-		fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
+	for _, manifest := range manifests {
+		computedObjKind, computedObjResult, err = computeEachObject([]byte(manifest))
+		if err != nil {
+			fmt.Println("Facing error whle parsing / computing: ", err)
+		} else if computedObjResult == nil {
+			fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
+		} else {
+			fmt.Println("obj kind: ", computedObjKind, ", cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
+			(*computedFileResult).Objects[computedObjResult.ObjKind] = append((*computedFileResult).Objects[computedObjResult.ObjKind], *computedObjResult)
+		}
 	}
 
-	fmt.Println("cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
 }
 
 func computeEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
@@ -140,4 +154,27 @@ func humanReadable(qtyType string, size int64) string {
 
 	}
 	return ""
+}
+
+func splitYAML(yamlContent string) []string {
+	var manifests []string
+	scanner := bufio.NewScanner(strings.NewReader(yamlContent))
+	var sb strings.Builder
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.TrimSpace(line) == "---" {
+			manifests = append(manifests, sb.String())
+			sb.Reset()
+		} else {
+			sb.WriteString(line + "\n")
+		}
+	}
+
+	if sb.Len() > 0 {
+		manifests = append(manifests, sb.String())
+	}
+
+	return manifests
 }

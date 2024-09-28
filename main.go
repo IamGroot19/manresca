@@ -3,12 +3,22 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 
-	yaml "sigs.k8s.io/yaml"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	yaml "sigs.k8s.io/yaml"
 )
+
+type ObjDetail struct {
+	ObjKind string
+	ObjName string
+	MemReq  string
+	MemLim  string
+	CpuReq  string
+	CpuLim  string
+}
 
 func main() {
 	//////////////// Reading whole file in one go
@@ -20,20 +30,70 @@ func main() {
 		- https://stackoverflow.com/questions/1821811/how-to-read-write-from-to-a-file-using-go
 
 	*/
-	yamlRawdata, err := os.ReadFile("./sample-dep.yaml")
+	yamlRawdata, err := os.ReadFile("./sample-sts.yaml")
 	if err != nil {
 		fmt.Println("Error occurred while tryig to readfile")
 	}
 	fmt.Println("Printing raw data after reading the file: ", yamlRawdata)
 
-	var inputdepl appsv1.Deployment = appsv1.Deployment{}
-	if err := yaml.Unmarshal(yamlRawdata, &inputdepl); err != nil {
-		fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
-		fmt.Println("priting inputdepl for debugging: ", inputdepl)
-		return
+	var computedObjResult *ObjDetail
+	var computedObjKind string
+
+	computedObjKind, computedObjResult, err = computeEachObject(yamlRawdata)
+	if err != nil {
+		fmt.Println("Facing error whle parsing / computing: ", err)
+	} else if computedObjResult == nil {
+		fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
 	}
 
-	var podTemplSpec v1.PodSpec = inputdepl.Spec.Template.Spec
+	fmt.Println("cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
+}
+
+func computeEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
+
+	type checkObjKind struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+	}
+	tmpChkObjKind := checkObjKind{}
+	if err := yaml.Unmarshal(yamlRawdata, &tmpChkObjKind); err != nil {
+		fmt.Println("Error unmarshalling raw data to check object kind. Error: ", err)
+	}
+	// fmt.Println("object kind: ", tmpChkObjKind.Kind)
+
+	// TODO v2: The following section feels hacky especially when consideing that more items can popup in future. Go read about  interfaces well & other OSS code  and see if this can be improved.
+	switch tmpChkObjKind.Kind {
+	case "StatefulSet":
+		var inputdepl appsv1.StatefulSet = appsv1.StatefulSet{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputdepl); err != nil {
+			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
+			return tmpChkObjKind.Kind, nil, err
+		}
+
+		var podTemplSpec v1.PodSpec = inputdepl.Spec.Template.Spec
+		computedObjDetail, err := processPodSpec(podTemplSpec, inputdepl.Name, inputdepl.Kind)
+		return tmpChkObjKind.Kind, computedObjDetail, err
+
+	case "Deployment":
+		var inputdepl appsv1.Deployment = appsv1.Deployment{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputdepl); err != nil {
+			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
+			return tmpChkObjKind.Kind, nil, err
+		}
+
+		var podTemplSpec v1.PodSpec = inputdepl.Spec.Template.Spec
+		computedObjDetail, err := processPodSpec(podTemplSpec, inputdepl.Name, inputdepl.Kind)
+		return tmpChkObjKind.Kind, computedObjDetail, err
+
+	default:
+		// fmt.Println("Neither of preexisting object kinds match. Object kind: ", tmpChkObjKind.Kind)
+		return tmpChkObjKind.Kind, nil, nil
+	}
+
+}
+
+func processPodSpec(podTemplSpec v1.PodSpec, ObjectName string, ObjectKind string) (*ObjDetail, error) {
+
 	var cpuReq, cpuLim, memReq, memLim resource.Quantity = resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{} // units of Mi and m
 	for _, container := range podTemplSpec.Containers {
 		// fmt.Printf("\nreq type: %T", container.Resources.Requests.Cpu())
@@ -52,5 +112,32 @@ func main() {
 		memLim.Add(*container.Resources.Limits.Memory())
 	}
 
-	fmt.Println("cpu req: ", cpuReq.String(), ", cpu lim: ", cpuLim.String(), ", memreq: ", memReq.Value(), ", mem lim: ", memLim.Value())
+	currObjData := &ObjDetail{
+		ObjName: ObjectName,
+		ObjKind: ObjectKind,
+		CpuReq:  fmt.Sprintf("%v", cpuReq.AsDec()),
+		CpuLim:  fmt.Sprintf("%v", cpuLim.AsDec()),
+		MemReq:  humanReadable("memory", memReq.Value()),
+		MemLim:  humanReadable("memory", memLim.Value()),
+	}
+
+	return currObjData, nil
+
+}
+
+// receives ineteger in byes and returns it as a human readable string
+func humanReadable(qtyType string, size int64) string {
+	switch qtyType {
+	case "memory":
+		units := []string{"B", "Ki", "Mi", "Gi", "Ti", "Pi"}
+		var finalQty float64 = float64(size)
+		var ct int8 = 0
+		for finalQty/1024 > 1 {
+			ct += 1
+			finalQty = finalQty / 1024
+		}
+		return strconv.FormatFloat(finalQty, 'f', 3, 64) + units[ct]
+
+	}
+	return ""
 }

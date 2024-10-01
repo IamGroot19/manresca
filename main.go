@@ -11,6 +11,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	table "github.com/jedib0t/go-pretty/v6/table"
+
+	// "github.com/spf13/cobra"
 )
 
 // This datastructure collects all the data
@@ -25,10 +27,11 @@ type AllObjDetail struct {
 type ObjDetail struct {
 	ObjKind string
 	ObjName string
-	MemReq  string
-	MemLim  string
+	MemReq  int64
+	MemLim  int64
 	CpuReq  string
 	CpuLim  string
+	Replicas int32
 }
 
 func main() {
@@ -89,27 +92,42 @@ func processEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
 	// TODO v2: The following section feels hacky especially when consideing that more items can popup in future. Go read about  interfaces well & other OSS code  and see if this can be improved.
 	switch tmpChkObjKind.Kind {
 	case "StatefulSet":
-		var inputdepl appsv1.StatefulSet = appsv1.StatefulSet{}
-		if err := yaml.Unmarshal(yamlRawdata, &inputdepl); err != nil {
+		var inputManifestObj appsv1.StatefulSet = appsv1.StatefulSet{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
 			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
 			return tmpChkObjKind.Kind, nil, err
 		}
 
-		var podTemplSpec v1.PodSpec = inputdepl.Spec.Template.Spec
-		computedObjDetail, err := processPodSpec(podTemplSpec, inputdepl.Name, inputdepl.Kind)
+		var podTemplSpec v1.PodSpec = inputManifestObj.Spec.Template.Spec
+		var replicas int32
+		if inputManifestObj.Spec.Replicas != nil {
+			replicas = *inputManifestObj.Spec.Replicas
+		} else  {
+			replicas = -1
+		}
+
+		computedObjDetail, err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas)
 		return tmpChkObjKind.Kind, computedObjDetail, err
 
 	case "Deployment":
-		var inputdepl appsv1.Deployment = appsv1.Deployment{}
-		if err := yaml.Unmarshal(yamlRawdata, &inputdepl); err != nil {
+		var inputManifestObj appsv1.Deployment = appsv1.Deployment{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
 			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
 			return tmpChkObjKind.Kind, nil, err
 		}
 
-		var podTemplSpec v1.PodSpec = inputdepl.Spec.Template.Spec
-		computedObjDetail, err := processPodSpec(podTemplSpec, inputdepl.Name, inputdepl.Kind)
-		return tmpChkObjKind.Kind, computedObjDetail, err
+		var podTemplSpec v1.PodSpec = inputManifestObj.Spec.Template.Spec
+		var replicas int32
+		if inputManifestObj.Spec.Replicas != nil {
+			replicas = *inputManifestObj.Spec.Replicas
+		} else  {
+			replicas = -1
+		}
 
+		computedObjDetail, err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas)
+		return tmpChkObjKind.Kind, computedObjDetail, err
+	
+	
 	default:
 		// fmt.Println("Neither of preexisting object kinds match. Object kind: ", tmpChkObjKind.Kind)
 		return tmpChkObjKind.Kind, nil, nil
@@ -117,7 +135,7 @@ func processEachObject(yamlRawdata []byte) (string, *ObjDetail, error) {
 
 }
 
-func processPodSpec(podTemplSpec v1.PodSpec, ObjectName string, ObjectKind string) (*ObjDetail, error) {
+func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind string, objReplicas int32) (*ObjDetail, error) {
 
 	var cpuReq, cpuLim, memReq, memLim resource.Quantity = resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{} // units of Mi and m
 	for _, container := range podTemplSpec.Containers {
@@ -138,12 +156,13 @@ func processPodSpec(podTemplSpec v1.PodSpec, ObjectName string, ObjectKind strin
 	}
 
 	currObjData := &ObjDetail{
-		ObjName: ObjectName,
-		ObjKind: ObjectKind,
+		ObjName: objectName,
+		ObjKind: objectKind,
 		CpuReq:  fmt.Sprintf("%v", cpuReq.AsDec()),
 		CpuLim:  fmt.Sprintf("%v", cpuLim.AsDec()),
-		MemReq:  humanReadable("memory", memReq.Value()),
-		MemLim:  humanReadable("memory", memLim.Value()),
+		MemReq:  memReq.Value(), // humanReadable("memory", memReq.Value()),
+		MemLim:  memLim.Value(), // humanReadable("memory", memLim.Value()),
+		Replicas:  objReplicas,
 	}
 
 	return currObjData, nil
@@ -162,17 +181,24 @@ func renderOutput(renderData *AllObjDetail) {
 	t.Style().Options.SeparateRows = true
 	rowConfigAutoMerge := table.RowConfig{AutoMerge: true}
 
-	t.AppendHeader(table.Row{"Kind", "Name", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
-	t.AppendHeader(table.Row{"", "", "Request", "Limit", "Request", "Limit"})
+	t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
+	t.AppendHeader(table.Row{"", "", "",  "Request", "Limit", "Request", "Limit"})
 	for objkind, objList := range renderData.Objects {
 
 		for _, obj := range objList {
-			t.AppendRow(table.Row{objkind, obj.ObjName, obj.CpuReq, obj.CpuLim, obj.MemReq, obj.MemLim})
+			t.AppendRow(table.Row{objkind, obj.ObjName, printReplicas(obj), obj.CpuReq, obj.CpuLim, humanReadable("memory", obj.MemReq), humanReadable("memory", obj.MemLim)})
 		}
 	}
 	t.Render()
 }
 
+func printReplicas(obj ObjDetail) (string) {
+	if obj.Replicas != -1 {
+		return strconv.Itoa(int(obj.Replicas))
+	} else {
+		return "NA"
+	}
+}
 // receives ineteger in byes and returns it as a human readable string
 func humanReadable(qtyType string, size int64) string {
 	switch qtyType {

@@ -34,7 +34,7 @@ type ObjDetail struct {
 	Replicas int32
 }
 
-func ProcessManifest(manifestPath string) {
+func ProcessManifest(manifestPath string, reportVerbosity int) {
 
 	//////////////// Reading whole file in one go
 	/*
@@ -68,7 +68,7 @@ func ProcessManifest(manifestPath string) {
 			(*computedFileResult).Objects[computedObjResult.ObjKind] = append((*computedFileResult).Objects[computedObjResult.ObjKind], *computedObjResult)
 		}
 	}
-		renderOutput(computedFileResult) // print tabular summary
+	renderOutput(reportVerbosity, computedFileResult) // print tabular summary
 	
 
 }
@@ -169,7 +169,7 @@ func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind strin
 
 }
 
-func renderOutput(renderData *AllObjDetail) {
+func renderOutput(reportVerbosity int ,renderData *AllObjDetail) {
 
 	// w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
 	// fmt.Fprintln(w, "Name\tKind\tCPU\tMem")
@@ -181,14 +181,26 @@ func renderOutput(renderData *AllObjDetail) {
 	t.Style().Options.SeparateRows = true
 	rowConfigAutoMerge := table.RowConfig{AutoMerge: true}
 
-	t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
-	t.AppendHeader(table.Row{"", "", "",  "Request", "Limit", "Request", "Limit"})
-	for objkind, objList := range renderData.Objects {
+	switch reportVerbosity{
+	case 0:
+		t.AppendHeader(table.Row{"Kind", "Name", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
+		t.AppendHeader(table.Row{"", "", "Request", "Limit", "Request", "Limit"})
+		for objkind, objList := range renderData.Objects {
+			for _, obj := range objList {
+				t.AppendRow(table.Row{objkind, obj.ObjName, obj.CpuReq, obj.CpuLim, humanReadable("memory", obj.MemReq), humanReadable("memory", obj.MemLim)})
+			}
+		}
 
-		for _, obj := range objList {
-			t.AppendRow(table.Row{objkind, obj.ObjName, printReplicas(obj), obj.CpuReq, obj.CpuLim, humanReadable("memory", obj.MemReq), humanReadable("memory", obj.MemLim)})
+	case 1:
+		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
+		t.AppendHeader(table.Row{"", "", "",  "Request", "Limit", "Request", "Limit"})
+		for objkind, objList := range renderData.Objects {
+			for _, obj := range objList {
+				t.AppendRow(table.Row{objkind, obj.ObjName, printReplicas(obj), obj.CpuReq, obj.CpuLim, humanReadable("memory", obj.MemReq), humanReadable("memory", obj.MemLim)})
+			}
 		}
 	}
+	
 	t.Render()
 }
 

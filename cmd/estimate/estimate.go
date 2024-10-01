@@ -21,7 +21,7 @@ This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("Estimate called with verbosity %d for the filepath %s\n", reportVerbosity, manifestPath)
-		ProcessManifest(manifestPath)
+		ProcessManifest(manifestPath, reportVerbosity)
 	},
 }
 

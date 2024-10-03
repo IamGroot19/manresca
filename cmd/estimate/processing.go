@@ -6,21 +6,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	yaml "sigs.k8s.io/yaml"
+
+	table "github.com/jedib0t/go-pretty/v6/table"
+	"github.com/jedib0t/go-pretty/v6/text"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	table "github.com/jedib0t/go-pretty/v6/table"
+	yaml "sigs.k8s.io/yaml"
 
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
-
 	// "github.com/spf13/cobra"
 )
 
 // This datastructure collects all the data
 //  related to a single input file passed to the tool
 type AllObjDetail struct {
-	Objects map[string][]ObjDetail
+	Objects map[string][]*ObjDetail
 }
 
 func (a *AllObjDetail) chkIfObjAdded(targetObjKind string, targetObjName string) (*ObjDetail) {
@@ -29,7 +30,7 @@ func (a *AllObjDetail) chkIfObjAdded(targetObjKind string, targetObjName string)
 	if exists {
 		for _, computedObj := range objects  {
 			if computedObj.ObjName == targetObjName {
-				return &computedObj
+				return computedObj
 			}
 		}	
 		return nil
@@ -74,22 +75,13 @@ func ProcessManifest(manifestPath string, reportVerbosity int) {
 	manifests := splitYAML(string(yamlRawdata))
 
 	var computedFileResult *AllObjDetail = &AllObjDetail{}
-	computedFileResult.Objects = make(map[string][]ObjDetail)
-	var computedObjResult *ObjDetail
+	computedFileResult.Objects = make(map[string][]*ObjDetail)
 	// var computedObjKind string
 
 	for _, manifest := range manifests {
-		_, computedObjResult, err = processEachObject([]byte(manifest), computedFileResult)
-
+		processEachObject([]byte(manifest), computedFileResult)
+		// fmt.Println("computedFileResult: ", *&computedFileResult.Objects, "\n")
 		
-		if err != nil {
-			fmt.Println("Facing error whle parsing / computing: ", err)
-		} else if computedObjResult == nil {
-			// fmt.Printf("Parsed object is of kind: %s and has no relevance in this computation\n", computedObjKind)
-		} else {
-			// fmt.Println("obj kind: ", computedObjKind, ", cpu req: ", computedObjResult.CpuReq, ", cpu lim: ", computedObjResult.CpuLim, ", memreq: ", computedObjResult.MemReq, ", mem lim: ", computedObjResult.MemLim)
-			(*computedFileResult).Objects[computedObjResult.ObjKind] = append((*computedFileResult).Objects[computedObjResult.ObjKind], *computedObjResult)
-		}
 	}
 	renderOutput(reportVerbosity, computedFileResult) // print tabular summary
 	
@@ -98,10 +90,10 @@ func ProcessManifest(manifestPath string, reportVerbosity int) {
 
 // This method processes each k8s object and
 //  stores the resulting data in an object of
-// the `ObjDetail` type. 
+// the `ObjDetail` type, which is appended to bigger type  `AllObjDetail` 
 // It outsources actual resources extraction to a separate fcuntion
 // since podspec is common to both deployments and statefulsets 
-func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) (string, *ObjDetail, error) {
+func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) {
 
 	type checkObjKind struct {
 		APIVersion string `yaml:"apiVersion"`
@@ -118,7 +110,7 @@ func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) (st
 		var inputManifestObj appsv1.StatefulSet = appsv1.StatefulSet{}
 		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
 			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
-			return tmpChkObjKind.Kind, nil, err
+			return
 		}
 
 		var podTemplSpec v1.PodSpec = inputManifestObj.Spec.Template.Spec
@@ -129,14 +121,18 @@ func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) (st
 			replicas = -1
 		}
 
-		computedObjDetail, err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas)
-		return tmpChkObjKind.Kind, computedObjDetail, err
-
+		if  err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas, computedFileResult); err != nil {
+			fmt.Printf("Error processing PodSpec for an Objectc Kind %s: %v\n", tmpChkObjKind.Kind, err)
+			return
+		} else {
+			return
+		}
+		
 	case "Deployment":
 		var inputManifestObj appsv1.Deployment = appsv1.Deployment{}
 		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
 			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
-			return tmpChkObjKind.Kind, nil, err
+			return
 		}
 
 		var podTemplSpec v1.PodSpec = inputManifestObj.Spec.Template.Spec
@@ -147,70 +143,60 @@ func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) (st
 			replicas = -1
 		}
 
-		computedObjDetail, err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas)
-		/* TODO: below idea of blindly setting to -1 is a bad way to update min/max repicas coz:
-		- a given obj's hpa could be parsed before that object (vice-versa can happen as well)
-		  - so, if the hpa is parsed first, then we will need to add that object in the `computedFileResult` structure with just the name, kind, min/max replicas. Naturally the cpu, ram will be added when we parse the actual deployment/sts corresp. to that object
-		  - if the dep/sts is parse before hpa, then setting min/max replicas to -1 is ok
-		- so, to account for both cases, first cheeck if that obj is already parsed & added to `computedFileResult` datastructure (this logic should be added in the `processEachObj` function)
-		- 
-		*/
-		computedObjDetail.MinReplicas = -1
-		computedObjDetail.MaxReplicas = -1
-		return tmpChkObjKind.Kind, computedObjDetail, err
-	
+		if err := processPodSpec(podTemplSpec, inputManifestObj.Name, inputManifestObj.Kind, replicas, computedFileResult); err != nil {
+			fmt.Printf("Error processing PodSpec for an Objectc Kind %s: %v\n", tmpChkObjKind.Kind, err)
+			return
+		} else {
+			return
+		}
+
 	case "HorizontalPodAutoscaler":
 		var inputManifestObj autoscaling.HorizontalPodAutoscaler = autoscaling.HorizontalPodAutoscaler{}
 		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
 			fmt.Println("Error unmarshalling yaml data into deployment struct type: ", err)
-			return tmpChkObjKind.Kind, nil, err
+			return 
 		}
 
 		var hpaSpec autoscaling.HorizontalPodAutoscalerSpec = inputManifestObj.Spec
-		// var hpaTargetName, hpaTargetKind string
-
-		if targetObj := computedFileResult.chkIfObjAdded(hpaSpec.ScaleTargetRef.Kind, hpaSpec.ScaleTargetRef.Name); targetObj != nil {
-			if err, computedObjDetail := processHPASpec(hpaSpec, targetObj); err != nil {
-				return tmpChkObjKind.Kind, nil, err
-			} else {
-				return tmpChkObjKind.Kind, computedObjDetail, nil
-			}
+		if err := processHPASpec(hpaSpec, computedFileResult); err != nil {
+			fmt.Printf("Unable to process Spec for the HPA object %s due to Error: %v\n", inputManifestObj.Name, err)
+			return 		
 		} else {
-			if err, computedObjDetail := processHPASpec(hpaSpec, nil); err != nil {
-				return tmpChkObjKind.Kind, nil, err
-			} else {
-				return tmpChkObjKind.Kind, computedObjDetail, nil
-			}
+			return 
 		}
-
-
-		
 		
 	default:
-		fmt.Println("Neither of preexisting object kinds match. Object kind: ", tmpChkObjKind.Kind)
-		return tmpChkObjKind.Kind, nil, nil
+		// fmt.Println("Neither of preexisting object kinds match. Object kind: ", tmpChkObjKind.Kind)
+		return
 	}
 
 }
 
 
 
-func processHPASpec(hpaSpec autoscaling.HorizontalPodAutoscalerSpec, computedObj *ObjDetail) (error, *ObjDetail) {
+func processHPASpec(hpaSpec autoscaling.HorizontalPodAutoscalerSpec, computedFileResult *AllObjDetail) (error) {
+ 
+	computedObj := computedFileResult.chkIfObjAdded(hpaSpec.ScaleTargetRef.Kind, hpaSpec.ScaleTargetRef.Name)
+
+
 	if computedObj == nil {
+		// fmt.Println("computedObj is nil: ", *computedObj)
 		computedObj = &ObjDetail{
 			MinReplicas:  *hpaSpec.MinReplicas,
 			MaxReplicas: hpaSpec.MaxReplicas,
 			ObjName: hpaSpec.ScaleTargetRef.Name,
 			ObjKind: hpaSpec.ScaleTargetRef.Kind,
 		}
-		return nil, computedObj
+		(*computedFileResult).Objects[hpaSpec.ScaleTargetRef.Kind] = append((*computedFileResult).Objects[hpaSpec.ScaleTargetRef.Kind], computedObj)
+		return nil
 	}else {
+		// fmt.Println("compuedObj already exists (so will just edit up min/max replicas): ", *computedObj)
 		computedObj.MinReplicas = *hpaSpec.MinReplicas
 		computedObj.MaxReplicas = hpaSpec.MaxReplicas
-		return nil, computedObj
+		return  nil
 	}
 }
-func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind string, objReplicas int32, computedFileResult *AllObjDetail ) (*ObjDetail, error) {
+func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind string, objReplicas int32, computedFileResult *AllObjDetail ) (error) {
 
 	var cpuReq, cpuLim, memReq, memLim resource.Quantity = resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{} // units of Mi and m
 	for _, container := range podTemplSpec.Containers {
@@ -230,29 +216,30 @@ func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind strin
 		memLim.Add(*container.Resources.Limits.Memory())
 	}
 
-	
 
 	if existingObj := computedFileResult.chkIfObjAdded(objectKind, objectName); existingObj != nil {
+		// fmt.Printf("Obj %s already added, so just editing it to add hpa min/max repica count", existingObj.ObjName)
 		existingObj.ObjName = objectName
 		existingObj.ObjKind = objectKind
 		existingObj.CpuReq = fmt.Sprintf("%v", cpuReq.AsDec())
 		existingObj.CpuLim = fmt.Sprintf("%v", cpuLim.AsDec())
 		existingObj.MemReq = memReq.Value()
 		existingObj.MemLim = memLim.Value()
-		return existingObj, nil
+		return nil
 	} else {
-		currObjData := &ObjDetail{
+		computedObj := &ObjDetail{
 			ObjName: objectName,
 			ObjKind: objectKind,
 			CpuReq:  fmt.Sprintf("%v", cpuReq.AsDec()),
-			CpuLim:  fmt.Sprintf("%v", cpuLim.AsDec())
+			CpuLim:  fmt.Sprintf("%v", cpuLim.AsDec()),
 			MemReq:  memReq.Value(), // humanReadable("memory", memReq.Value()),
 			MemLim:  memLim.Value(), // humanReadable("memory", memLim.Value()),
 			Replicas:  objReplicas,
 			MinReplicas: -1,
 			MaxReplicas: -1,
 		}
-		return currObjData, nil
+		(*computedFileResult).Objects[computedObj.ObjKind] = append((*computedFileResult).Objects[computedObj.ObjKind], computedObj)
+		return nil
 
 	}
 	
@@ -268,6 +255,9 @@ func renderOutput(reportVerbosity int ,renderData *AllObjDetail) {
 	// t.SetStyle(table.StyleColoredBright)
 	t.SetStyle(table.StyleLight)
 	t.Style().Options.SeparateRows = true
+	// t.Style().Box.PaddingLeft = ""
+	t.Style().Box.PaddingRight = "  "
+
 	rowConfigAutoMerge := table.RowConfig{AutoMerge: true}
 
 	switch reportVerbosity{
@@ -282,23 +272,55 @@ func renderOutput(reportVerbosity int ,renderData *AllObjDetail) {
 
 	case 1:
 		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, rowConfigAutoMerge)
-		t.AppendHeader(table.Row{"", "", "",  "Request", "Limit", "Request", "Limit"})
+		t.AppendHeader(table.Row{"", "", "(Replicas / HPA Min / HPA Max)",  "Request", "Limit", "Request", "Limit"})
 		for objkind, objList := range renderData.Objects {
 			for _, obj := range objList {
 				t.AppendRow(table.Row{objkind, obj.ObjName, printReplicas(obj), obj.CpuReq, obj.CpuLim, humanReadable("memory", obj.MemReq), humanReadable("memory", obj.MemLim)})
 			}
 		}
-	}
 	
+
+	case 2:
+		fmt.Println("Add logic for case2: multiply cpu/mem nos. with replicas")
+	}
+
+	t.SetColumnConfigs([]table.ColumnConfig{
+		{Number: 1, AutoMerge: true, AlignHeader: text.AlignCenter, Align: text.AlignLeft},
+		{Number: 2, AutoMerge: true, AlignHeader: text.AlignCenter, Align: text.AlignLeft},
+		{Number: 3, AutoMerge: true, AlignHeader: text.AlignCenter, Align: text.AlignCenter},
+		{Number: 4, AutoMerge: true, AlignHeader: text.AlignLeft, Align: text.AlignLeft},
+		{Number: 5, AutoMerge: true, AlignHeader: text.AlignLeft, Align: text.AlignLeft},
+		{Number: 6, AutoMerge: true, AlignHeader: text.AlignLeft, Align: text.AlignLeft},
+		{Number: 7, AutoMerge: true, AlignHeader: text.AlignLeft, Align: text.AlignLeft},
+	})
 	t.Render()
 }
 
-func printReplicas(obj ObjDetail) (string) {
+func printReplicas(obj *ObjDetail) (string) {
+	var replicaString strings.Builder
+
 	if obj.Replicas != -1 {
-		return strconv.Itoa(int(obj.Replicas))
+		replicaString.WriteString( strconv.Itoa(int(obj.Replicas)) )
 	} else {
-		return "NA"
+		replicaString.WriteString("x")	
 	}
+	
+	if obj.MinReplicas != -1 {
+		replicaString.WriteString(" / ")
+		replicaString.WriteString( strconv.Itoa(int(obj.MinReplicas)) )
+		
+	} else {
+		replicaString.WriteString(" / x")
+	}
+
+	if  obj.MaxReplicas != -1 {
+		replicaString.WriteString(" / ")
+		replicaString.WriteString( strconv.Itoa(int(obj.MaxReplicas)) )
+	}else {
+		replicaString.WriteString(" / x")
+	}
+
+	return replicaString.String()
 }
 // receives ineteger in byes and returns it as a human readable string
 func humanReadable(qtyType string, size int64) string {
@@ -311,7 +333,7 @@ func humanReadable(qtyType string, size int64) string {
 			ct += 1
 			finalQty = finalQty / 1024
 		}
-		return strconv.FormatFloat(finalQty, 'f', 3, 64) + units[ct]
+		return strconv.FormatFloat(finalQty, 'f', 3, 64) + " " + units[ct]
 
 	}
 	return ""

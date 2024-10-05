@@ -46,7 +46,7 @@ Use "manresca [command] --help" for more information about a command.
 
 
 # Sample Usage Command
-$ ./manresca estimate -f my-rendered-file.yml  --verbosity 0
+$ ./manresca estimate -f examples/combined_manifests.yaml  --verbosity 0
 ```
 
 ## Features 

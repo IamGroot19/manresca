@@ -179,3 +179,72 @@ spec:
       target:
         type: Utilization
         averageUtilization: 50
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: standalone-pod
+  labels:
+    name: myapp
+spec:
+  terminationGracePeriodSeconds: 300
+  containers:
+  - name: standalone-pod-myapp
+    image: nginx/nginx:latest
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+    ports:
+      - containerPort: 8080
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name:  my-sample-job
+spec:
+  template:
+    metadata:
+      name:  name
+    spec:
+      initContainers:
+      - name: my-sample-job-initcontainer
+        image: nginx/nginx:latest
+        resources:
+          limits:
+            memory: "2.78Gi"
+            cpu: "4500m"
+        ports:
+          - containerPort: 8080
+      containers:
+      - name: my-sample-job-container
+        image: nginx/nginx:latest
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+          - containerPort: 8080
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mycronjob
+spec:
+  schedule: "* * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: mycronjob-hello
+            image: busybox:1.28
+            resources:
+              limits:
+                memory: "128Mi"
+                cpu: "500m"
+            command:
+            - /bin/sh
+            - -c
+            - date; echo Hello from the Kubernetes cluster
+          restartPolicy: OnFailure

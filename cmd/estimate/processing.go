@@ -9,6 +9,8 @@ import (
 	table "github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	yaml "sigs.k8s.io/yaml"
@@ -127,7 +129,51 @@ func processEachObject(yamlRawdata []byte, computedFileResult *AllObjDetail) {
 		} else {
 			return
 		}
+	
+	case "Pod":
+		var inputManifestObj v1.Pod = v1.Pod{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
+			fmt.Println("Error unmarshalling yaml data into Pod struct type: " , err)
+			return 
+		}
+		var replicas int32 = 1
 
+		if err := processPodSpec(inputManifestObj.Spec, inputManifestObj.Name, inputManifestObj.Kind,replicas, computedFileResult); err != nil {
+			fmt.Printf("Unable to process spec for kind %s and object %s", inputManifestObj.Kind, inputManifestObj.Name)
+			return
+		} else {
+			return
+		}
+
+	case "Job":
+		// fmt.Println("Parsing a pod manifest of kind: ", tmpChkObjKind.Kind)
+
+		var inputManifestObj batchv1.Job = batchv1.Job{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
+			fmt.Println("Error unmarshalling yaml data into Job datatype: ", err)
+		}
+		var replicas int32 = 1
+
+		if err := processPodSpec(inputManifestObj.Spec.Template.Spec, inputManifestObj.Name, inputManifestObj.Kind, replicas, computedFileResult ); err != nil {
+			fmt.Printf("Unable to process spec for kind %s and object %s", inputManifestObj.Kind, inputManifestObj.Name)
+			return
+		} else {
+			return
+		}
+	case "CronJob":
+		var inputManifestObj batchv1.CronJob = batchv1.CronJob{}
+		if err := yaml.Unmarshal(yamlRawdata, &inputManifestObj); err != nil {
+			fmt.Println("Error unmarshalling yaml data into CronJob datatype: ", err)
+		}
+		var replicas int32 = 1
+
+		if err := processPodSpec(inputManifestObj.Spec.JobTemplate.Spec.Template.Spec, inputManifestObj.Name, inputManifestObj.Kind, replicas, computedFileResult); err != nil {
+			fmt.Printf("Unable to process spec for kind %s and object %s", inputManifestObj.Kind, inputManifestObj.Name)
+			return
+		} else {
+			return
+		}
+		
 	default:
 		// fmt.Println("Neither of preexisting object kinds match. Object kind: ", tmpChkObjKind.Kind)
 		return
@@ -162,6 +208,7 @@ func processHPASpec(hpaSpec autoscaling.HorizontalPodAutoscalerSpec, computedFil
 }
 func processPodSpec(podTemplSpec v1.PodSpec, objectName string, objectKind string, objReplicas int32, computedFileResult *AllObjDetail) error {
 
+	fmt.Println("objname: ", objectName)
 	var cpuReq, cpuLim, memReq, memLim resource.Quantity = resource.Quantity{}, resource.Quantity{}, resource.Quantity{}, resource.Quantity{} // units of Mi and m
 	for _, container := range podTemplSpec.Containers {
 		// fmt.Printf("\nreq type: %T", container.Resources.Requests.Cpu())
@@ -245,7 +292,7 @@ func renderOutput(reportVerbosity int, renderData *AllObjDetail) {
 	// 	}
 
 	case 0:
-		fmt.Println("Summary: Prints Replica Counts and Resource Usage at a per Object level (doesnt multiply resources by replica count nor does it show total resource usage)\nIf a certain value is not provided (or is zero), then an underscore is printed as a placeholder")
+		fmt.Printf("Summary: Prints Replica Counts and Resource Usage at a per Object level (doesnt multiply resources by replica count nor does it show total resource usage).\n		If a certain value is not provided (or is zero), then an underscore is printed as a placeholder\n")
 		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, table.RowConfig{AutoMerge: true})
 		t.AppendHeader(table.Row{"", "", "(Replicas / HPA Min / HPA Max)", "Request", "Limit", "Request", "Limit"})
 		for objkind, objList := range renderData.Objects {
@@ -255,7 +302,7 @@ func renderOutput(reportVerbosity int, renderData *AllObjDetail) {
 		}
 
 	case 1:
-		fmt.Printf("Summary: Print repiica count, total resources per object (i.e per pod resources multiplied by replica coun) and Net Total resource required by whole chart.\n         But in this case, given that HPAs are also involved, the Resource Columns for each object would show  3 numbers accounting (Replicas, HPAMin, HPAMax).\nIf a certain value is not provided (or is zero), then an underscore is printed as a placeholder")
+		fmt.Printf("Summary: Print repiica count, total resources per object (i.e per pod resources multiplied by replica coun) and Net Total resource required by whole chart.\n         But in this case, given that HPAs are also involved, the Resource Columns for each object would show  3 numbers accounting (Replicas, HPAMin, HPAMax).\nIf a certain value is not provided (or is zero), then an underscore is printed as a placeholder\n")
 		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, table.RowConfig{AutoMerge: true})
 		t.AppendHeader(table.Row{"", "", "(Replicas / HPA Min / HPA Max)", "Request (Replicas / Min / Max)", "Limit (Replicas / Min / Max)", "Request (Replicas / Min / Max)", "Limit (Replicas / Min / Max)"})
 

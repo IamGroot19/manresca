@@ -245,7 +245,7 @@ func renderOutput(reportVerbosity int, renderData *AllObjDetail) {
 	// 	}
 
 	case 0:
-		fmt.Println("Summary: Prints Replica Counts and Resource Usage at a per Object level (doesnt multiply resources by replica count nor does it show total resource usage)")
+		fmt.Println("Summary: Prints Replica Counts and Resource Usage at a per Object level (doesnt multiply resources by replica count nor does it show total resource usage)\nIf a certain value is not provided (or is zero), then an underscore is printed as a placeholder")
 		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, table.RowConfig{AutoMerge: true})
 		t.AppendHeader(table.Row{"", "", "(Replicas / HPA Min / HPA Max)", "Request", "Limit", "Request", "Limit"})
 		for objkind, objList := range renderData.Objects {
@@ -255,7 +255,7 @@ func renderOutput(reportVerbosity int, renderData *AllObjDetail) {
 		}
 
 	case 1:
-		fmt.Printf("Summary: Print repiica count, total resources per object (i.e per pod resources multiplied by replica coun) and Net Total resource required by whole chart.\n         But in this case, given that HPAs are also involved, the Resource Columns for each object would show  3 numbers accounting (Replicas, HPAMin, HPAMax)\n")
+		fmt.Printf("Summary: Print repiica count, total resources per object (i.e per pod resources multiplied by replica coun) and Net Total resource required by whole chart.\n         But in this case, given that HPAs are also involved, the Resource Columns for each object would show  3 numbers accounting (Replicas, HPAMin, HPAMax).\nIf a certain value is not provided (or is zero), then an underscore is printed as a placeholder")
 		t.AppendHeader(table.Row{"Kind", "Name", "Replicas", "CPU", "CPU", "Memory", "Memory"}, table.RowConfig{AutoMerge: true})
 		t.AppendHeader(table.Row{"", "", "(Replicas / HPA Min / HPA Max)", "Request (Replicas / Min / Max)", "Limit (Replicas / Min / Max)", "Request (Replicas / Min / Max)", "Limit (Replicas / Min / Max)"})
 
@@ -288,22 +288,20 @@ func printReplicas(obj *ObjDetail) string {
 	if obj.Replicas != -1 {
 		replicaString.WriteString(strconv.Itoa(int(obj.Replicas)))
 	} else {
-		replicaString.WriteString(" ")
+		replicaString.WriteString("_\t/\t")
 	}
 
 	if obj.MinReplicas != -1 {
-		replicaString.WriteString(" / ")
 		replicaString.WriteString(strconv.Itoa(int(obj.MinReplicas)))
 
 	} else {
-		replicaString.WriteString(" / ")
+		replicaString.WriteString("\t/\t_")
 	}
 
 	if obj.MaxReplicas != -1 {
-		replicaString.WriteString(" / ")
 		replicaString.WriteString(strconv.Itoa(int(obj.MaxReplicas)))
 	} else {
-		replicaString.WriteString(" / ")
+		replicaString.WriteString("\t/\t_")
 	}
 
 	return replicaString.String()
@@ -319,17 +317,17 @@ func printTotals(qtyType string, repMinMax [3]float32) string {
 	case "cpu":
 		for i := range repMinMax {
 			if repMinMax[i] < 0 {
-				result.WriteString(" / ")
+				result.WriteString("_\t/\t")
 			} else {
-				result.WriteString(humanReadable("cpu", repMinMax[i]) + " / ")
+				result.WriteString(humanReadable("cpu", repMinMax[i]) + "\t/\t")
 			}
 		}
 	case "mem":
 		for i := range repMinMax {
 			if repMinMax[i] < 0 {
-				result.WriteString(" / ")
+				result.WriteString("_\t/\t")
 			} else {
-				result.WriteString(humanReadable("mem", repMinMax[i]) + " / ")
+				result.WriteString(humanReadable("mem", repMinMax[i]) + "\t/\t")
 			}
 		}
 	default:
@@ -343,14 +341,14 @@ func humanReadable(qtyType string, size float32) string {
 	switch qtyType {
 	case "cpu":
 		if size == -0.0 || size == 0.0 {
-			return " "
+			return "_\t"
 		} else {
 			return strconv.FormatFloat(float64(size), 'f', 1, 64)
 		}
 
 	case "mem":
 		if size == 0.0 || size == -0.0 {
-			return " "
+			return "_\t"
 		} else {
 			units := []string{"B", "Ki", "Mi", "Gi", "Ti", "Pi"}
 			var finalQty float64 = float64(size)

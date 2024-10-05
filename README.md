@@ -2,7 +2,7 @@
 
 ### What is it?
 
-- Dealing with helm charts, especially a complicated one which has 20+ different subcharts tacked on to it, is complicated. What's even more complicated is to try to get an estimate of total resources the chart is going to need before you deploy it. 
+- Dealing with helm charts, especially ones which have 20+ different subcharts tacked on to it, is complicated. What's even more complicated is to try to get an estimate of total resources the chart is going to need before you deploy it. 
 
 - So, I wrote up a Golang based CLI `manresca` (manifests resources calculator) to do the job for me instead of havig to eyeball yaml files
 

@@ -1,8 +1,7 @@
 package estimate
 
 // This datastructure collects all the data
-//
-//	related to a single input file passed to the tool
+// related to a single input file passed to the tool
 type AllObjDetail struct {
 	Objects             map[string][]*ObjDetail
 	GrossTotalResources [4][3]float32
@@ -44,8 +43,8 @@ func (a *AllObjDetail) computeGrossTotalResources() {
 /////////////////////////////////////////////////////
 
 // This datastructure helps abstract
-// all the details related to a single manifest
-// instead of passing multiple fields all the time
+// all the details related to a single K8s Object
+// (takes away the pain of passing multiple fields like cpu,mem, replicas etc.) 
 type ObjDetail struct {
 	ObjKind                  string
 	ObjName                  string
